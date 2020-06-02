@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 // websocket相关的包
 import 'package:web_socket_channel/io.dart';
-// 编解码包
-import 'dart:convert' show utf8;
+// 编解码包, json反序列化
+import 'dart:convert';
 import 'dart:math';
 // 二进制相关
 import 'dart:typed_data';
@@ -10,7 +10,25 @@ import 'dart:io';
 // 主要引用Timer定时器模块
 import 'dart:async';
 
+/**
+ * 开启代理
+ * 缺少此处代码会导致charles抓取不到
+ * 什么事系统代理？
+ */
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext context) {
+    return super.createHttpClient(context)
+      ..findProxy = (uri) {
+        return "PROXY 172.17.221.6:80;";
+      }
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+  }
+}
+
 void main() {
+  HttpOverrides.global = new MyHttpOverrides();
   runApp(MyApp());
 }
 
@@ -129,7 +147,8 @@ class InputItemState extends State<InputItem> {
    */
   Uint8List encode(String str, int op) {
     // 将想要发送的内容转为二进制数据
-    List<int> data = utf8.encode(str);
+    Uint8List data = Uint8List.fromList(utf8.encode(str));
+    print('data${data}');
     // 计算出包的总长度
     int packetLen = 16 + data.length;
     // 进入房间时需要发送的验证信息前缀：协议类型、操作类型等
@@ -137,7 +156,7 @@ class InputItemState extends State<InputItem> {
     // 将总长度写入数据包前4个字节
     writeInt(header, 0, 4, packetLen);
     header.addAll(data);
-
+    print('header${header}');
     return Uint8List.fromList(header);
   }
 
@@ -145,54 +164,61 @@ class InputItemState extends State<InputItem> {
    * 链接主流程
    */
   void connectRoom(int roomid) {
-    var channel = IOWebSocketChannel.connect('ws://echo.websocket.org');
+    var channel =
+        IOWebSocketChannel.connect('');
 
-    Uint8List hehe = encode('{ roomid: ${roomid} }', 7);
-    print(hehe);
+    Uint8List hehe = encode('{"roomid":${roomid},"protover":1}', 7);
 
     // 进房发送消息确认
     channel.sink.add(hehe);
     // 心跳,以下内容类似setInterval
-    var sub = Timer.periodic(new Duration(seconds: 2), (timer) {
+    Timer sub = Timer.periodic(new Duration(seconds: 5), (timer) {
       channel.sink.add(encode('', 2));
+      print('心跳');
     });
-
-    channel.stream.listen((msgEvent) {
-      var packet = decode(msgEvent);
-      switch (packet.op) {
-        case 8:
-          print('加入房间');
-          break;
-        case 3:
-          /* const count = packet.body.count
+    
+    channel.stream.listen(
+      (msgEvent) {
+        ResData packet = decode(msgEvent);
+        switch (packet.op) {
+          case 8:
+            print('加入房间');
+            break;
+          case 3:
+            /* const count = packet.body.count
       print(`人气：${count}`); */
-          break;
-        case 5:
-          print(packet.body);
-          /* packet.body.forEach((body) {
-            switch (body.cmd) {
-              case 'DANMU_MSG':
-                print('${body.info[2][1]}: ${body.info[1]}');
-                break;
-              case 'SEND_GIFT':
-                print(
-                    '${body.data.uname} ${body.data.action} ${body.data.int} 个 ${body.data.giftName}');
-                break;
-              case 'WELCOME':
-                print('欢迎 ${body.data.uname}');
-                break;
-              // 此处省略很多其他通知类型
-              default:
-                print(body);
-            }
-          }); */
-          break;
-        default:
-          print(packet);
-      }
-    }, onDone: () {
-      sub.cancel();
-    });
+            break;
+          case 5:
+            packet.body.forEach((body) {
+              switch (body['cmd']) {
+                case 'DANMU_MSG':
+                  print('${body['info'][2][1]}: ${body['info'][1]}');
+                  break;
+                case 'SEND_GIFT':
+                  print(
+                      '${body.data.uname} ${body.data.action} ${body.data.int} 个 ${body.data.giftName}');
+                  break;
+                case 'WELCOME':
+                  print('欢迎 ${body.data.uname}');
+                  break;
+                // 此处省略很多其他通知类型
+                default:
+                  print(body);
+              }
+            });
+            break;
+          default:
+            print(packet);
+        }
+      },
+      onDone: () {
+        print('websocket close');
+        sub.cancel();
+      },
+      onError: (error) {
+        debugPrint('ws error $error');
+      },
+    );
   }
 
   /**
@@ -223,14 +249,15 @@ class InputItemState extends State<InputItem> {
         int packetLen = readInt(buffer, offset + 0, 4);
         int headerLen = 16;
         // 从头部长度到包总长度之间为数据
-        List<int> data = zlib
-            .decode(buffer.getRange(offset + headerLen, offset + packetLen));
-        resData.body.add(utf8.decode(data));
+        var p = buffer.getRange(offset + headerLen, offset + packetLen);
+        List<int> data = zlib.decode(p.toList());
+        String str = utf8.decode(Uint8List.fromList(data));
+        resData.body.add(jsonDecode(str.substring(str.indexOf('{'))));
 
         offset += packetLen;
       }
     } else if (resData.op == 3) {
-      /* resData.body = {
+      /* resData.body = {e
           count: readInt(buffer,16,4)
         }; */
     }
@@ -245,7 +272,7 @@ class ResData {
   int ver;
   int op;
   int seq;
-  List<String> body;
+  dynamic body;
 }
 
 /**
