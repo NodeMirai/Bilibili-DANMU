@@ -20,7 +20,7 @@ class MyHttpOverrides extends HttpOverrides {
   HttpClient createHttpClient(SecurityContext context) {
     return super.createHttpClient(context)
       ..findProxy = (uri) {
-        return "PROXY 172.17.221.6:80;";
+        return "PROXY 192.168.1.102:80;";
       }
       ..badCertificateCallback =
           (X509Certificate cert, String host, int port) => true;
@@ -28,7 +28,7 @@ class MyHttpOverrides extends HttpOverrides {
 }
 
 void main() {
-  HttpOverrides.global = new MyHttpOverrides();
+  // HttpOverrides.global = new MyHttpOverrides();
   runApp(MyApp());
 }
 
@@ -148,7 +148,6 @@ class InputItemState extends State<InputItem> {
   Uint8List encode(String str, int op) {
     // 将想要发送的内容转为二进制数据
     Uint8List data = Uint8List.fromList(utf8.encode(str));
-    print('data${data}');
     // 计算出包的总长度
     int packetLen = 16 + data.length;
     // 进入房间时需要发送的验证信息前缀：协议类型、操作类型等
@@ -156,7 +155,6 @@ class InputItemState extends State<InputItem> {
     // 将总长度写入数据包前4个字节
     writeInt(header, 0, 4, packetLen);
     header.addAll(data);
-    print('header${header}');
     return Uint8List.fromList(header);
   }
 
@@ -165,14 +163,14 @@ class InputItemState extends State<InputItem> {
    */
   void connectRoom(int roomid) {
     var channel =
-        IOWebSocketChannel.connect('');
+        IOWebSocketChannel.connect('wss://broadcastlv.chat.bilibili.com:2245/sub');
 
     Uint8List hehe = encode('{"roomid":${roomid},"protover":1}', 7);
 
     // 进房发送消息确认
     channel.sink.add(hehe);
     // 心跳,以下内容类似setInterval
-    Timer sub = Timer.periodic(new Duration(seconds: 5), (timer) {
+    Timer sub = Timer.periodic(new Duration(seconds: 30), (timer) {
       channel.sink.add(encode('', 2));
       print('心跳');
     });
@@ -190,7 +188,11 @@ class InputItemState extends State<InputItem> {
             break;
           case 5:
             packet.body.forEach((body) {
-              switch (body['cmd']) {
+              var cmd = body['cmd'].toString();
+              if (cmd.contains(':')) {
+                cmd = cmd.substring(0, cmd.indexOf(':'));
+              }
+              switch (cmd) {
                 case 'DANMU_MSG':
                   print('${body['info'][2][1]}: ${body['info'][1]}');
                   break;
